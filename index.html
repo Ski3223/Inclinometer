@@ -187,6 +187,7 @@
     darkMode: false,
     showHints: true,
     showRate: false,
+    lockToZero: false,       // true: numbers stay in the orientation they had when zeroed
     holdMs: 1000,
     doubleTapMs: 280,
     gestures: { zero: 'tap', freeze: 'hold', store: 'double' },
@@ -226,6 +227,7 @@
   // ---------------------------------------------------------------------------
   let filtered = null;     // smoothed gravity vector in device coordinates (units of g)
   let edgeUp = null;       // device axis pointing "up" from the measured edge
+  let displayUp = null;    // device side that was facing up when zeroed (lock mode)
   let unwrapped = null;    // continuous angle, can pass ±180
   let prevRaw = null;
   let zeroRef = 0;
@@ -240,7 +242,17 @@
   let needsRender = false;
 
   function resetMeasurement() {
-    edgeUp = null; unwrapped = null; prevRaw = null; zeroRef = 0;
+    edgeUp = null; unwrapped = null; prevRaw = null; zeroRef = 0; displayUp = null;
+  }
+
+  // Lock mode: remember which side of the device faces up right now, so the
+  // numbers stay drawn that way until the next zero.
+  function captureDisplay() {
+    if (!filtered || Math.hypot(filtered.x, filtered.y) < FLAT_THRESHOLD) return false;
+    const q = Math.round(Math.atan2(filtered.y, filtered.x) / (Math.PI / 2)) * (Math.PI / 2);
+    displayUp = { x: Math.round(Math.cos(q)), y: Math.round(Math.sin(q)) };
+    layout();
+    return true;
   }
 
   // The measured edge is a fixed setting tied to the phone's body, so rotating
@@ -266,6 +278,9 @@
       return;
     }
     if (isFlat) { isFlat = false; needsRender = true; }
+
+    // Lock mode starts out locked to however the device is held.
+    if (settings.lockToZero && !displayUp) captureDisplay();
 
     // Which way is "up" along the measured edge? Taken from gravity, so it works
     // regardless of how a browser signs its sensor values.
@@ -310,8 +325,13 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     const a = (screenAngle() * Math.PI) / 180;
     const screenUp = { x: Math.sin(a), y: Math.cos(a) };      // screen's up, in device coordinates
-    const want = edgeUp || defaultUp();                        // the content's up, in device coordinates
-    let delta = toDeg(Math.atan2(want.y, want.x) - Math.atan2(screenUp.y, screenUp.x));
+    // Unlocked: draw normally and let the screen's own rotation decide.
+    // Locked: counter-rotate so the numbers stay as they were when zeroed.
+    let delta = 0;
+    if (settings.lockToZero) {
+      const want = displayUp || edgeUp || defaultUp();   // the content's up, in device coordinates
+      delta = toDeg(Math.atan2(want.y, want.x) - Math.atan2(screenUp.y, screenUp.x));
+    }
     delta = Math.round(wrap180(delta) / 90) * 90;
     if (delta === -180) delta = 180;
     const sideways = Math.abs(delta) === 90;
@@ -391,7 +411,9 @@
   function doZero() {
     if (frozen) { frozen = null; buzz('unfreeze'); return render(); }
     if (unwrapped === null) return buzz('nope');
-    zeroRef = unwrapped; live = 0; buzz('zero'); render();
+    zeroRef = unwrapped; live = 0;
+    if (settings.lockToZero) captureDisplay();
+    buzz('zero'); render();
   }
   function doFreeze() {
     if (frozen) { frozen = null; buzz('unfreeze'); return render(); }
@@ -484,6 +506,8 @@
     settings = { ...settings, ...patch };
     saveSettings();
     if (settings.edge !== before) { resetMeasurement(); }
+    if (!settings.lockToZero) displayUp = null;
+    else if (!displayUp) captureDisplay();
     applyTheme(); layout(); updateWakeLock(); drawMenu(); render();
   }
   function assign(action, gesture) {
@@ -579,6 +603,8 @@
         ${toggle('darkMode', 'Dark background')}
         ${canWakeLock ? toggle('keepAwake', 'Keep screen awake') : ''}
         ${canVibrate ? toggle('haptics', 'Vibrate to confirm') : ''}
+        ${toggle('lockToZero', 'Lock numbers to zeroed orientation')}
+        <p class="hint">On: the numbers stay the way they were drawn when you zeroed, however you rotate the device. Off: the numbers rotate with the screen, so your device's rotation lock decides. The measurement itself never resets either way.</p>
         ${toggle('reverse', 'Clockwise reads positive')}
         ${toggle('showRate', 'Show sensor rate')}
         ${!canVibrate ? '<p class="hint">This browser doesn’t support vibration, so the screen color confirms each action instead.</p>' : ''}
@@ -613,7 +639,7 @@
       </div>
       <div class="section"><h2>Install it like an app</h2>
         <p class="body">On iPhone or iPad, tap Share in Safari, then Add to Home Screen. On Android, open Chrome's menu and choose Add to Home screen or Install app. It then opens full-screen from its own icon.</p>
-        <p class="body">If the screen rotates while you measure, turn on your device's rotation lock. The app draws itself to match the measured edge either way.</p>
+        <p class="body">Rotating the device never resets the measurement. How the numbers are drawn is up to you. By default they rotate with the screen, so your device's rotation lock decides whether they turn. To keep them drawn the way they were when you zeroed, turn on Settings › Lock numbers to zeroed orientation.</p>
       </div>
       <div class="section"><h2>Accuracy tips</h2>
         <p class="body">The app measures tilt from gravity with the device's motion sensor, so hold still for a moment before freezing. It can't read edge tilt with the device lying flat on its back. Cases with raised or curved edges can add error, so zero against a known level surface when accuracy matters.</p>
