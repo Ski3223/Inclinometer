@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inclinometer">
+<title>Inclinometer</title>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    --live-bg: #E9EEEC; --live-ink: #14211E; --muted: #5B6965; --line: #C9D2CF;
+    --panel: #FFFFFF; --accent: #1C4A80; --danger: #A33A2E;
+    --frozen-bg: #1C4A80; --stored-bg: #2B6E47; --on-state: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --live-bg: #000000; --live-ink: #FFFFFF; --muted: #9AA7A3; --line: #2C3331;
+      --panel: #1B2120; --accent: #8DB8EC; --danger: #E57A6B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --live-bg: #000000; --live-ink: #FFFFFF; --muted: #9AA7A3; --line: #2C3331;
+    --panel: #1B2120; --accent: #8DB8EC; --danger: #E57A6B;
+  }
+  /* The app's own Dark background setting wins over everything above. */
+  body.force-light {
+    --live-bg: #E9EEEC; --live-ink: #14211E; --muted: #5B6965; --line: #C9D2CF;
+    --panel: #FFFFFF; --accent: #1C4A80; --danger: #A33A2E;
+  }
+  body.force-dark {
+    --live-bg: #000000; --live-ink: #FFFFFF; --muted: #9AA7A3; --line: #2C3331;
+    --panel: #1B2120; --accent: #8DB8EC; --danger: #E57A6B;
+  }
+  html, body { height: 100%; margin: 0; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    background: var(--live-bg); color: var(--live-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent; overflow: hidden;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+
+  /* ---- Main measuring screen ---- */
+  #stage { position: fixed; inset: 0; background: var(--live-bg); touch-action: none; transition: background-color .12s; }
+  #stage.frozen { background: var(--frozen-bg); }
+  #stage.stored-flash { background: var(--stored-bg); }
+  #stage.frozen, #stage.stored-flash { --ink: var(--on-state); }
+  #stage { --ink: var(--live-ink); }
+  #rot {
+    position: absolute; left: 50%; top: 50%;
+    box-sizing: border-box; color: var(--ink);
+    padding: max(18px, env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column;
+  }
+  #topbar { display: flex; justify-content: space-between; align-items: center; min-height: 32px; }
+  #burger { width: 44px; height: 44px; display: flex; flex-direction: column; justify-content: center; gap: 6px; margin: -8px; padding: 8px; box-sizing: border-box; }
+  #burger span { display: block; height: 3px; border-radius: 2px; background: var(--ink); }
+  #count { font-size: 15px; font-weight: 600; opacity: .7; }
+  #center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
+  #angle { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1.05; white-space: nowrap; }
+  #angle .deg { font-size: .45em; vertical-align: .55em; margin-left: .02em; }
+  #status { font-size: 18px; font-weight: 600; opacity: .75; margin-top: 4px; text-align: center; }
+  #rate { font-size: 14px; opacity: .5; margin-top: 2px; }
+  #hints { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 28px; font-size: 15px; opacity: .55; min-height: 20px; }
+  #hints b { font-weight: 800; margin-right: 6px; }
+
+  /* ---- Start overlay (motion permission) ---- */
+  #start {
+    position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+    background: var(--live-bg); color: var(--live-ink); padding: 32px; text-align: center;
+  }
+  #start.show { display: flex; }
+  #start h1 { font-size: 30px; margin: 0 0 10px; }
+  #start p { font-size: 17px; line-height: 1.5; color: var(--muted); max-width: 30em; margin: 0 auto 22px; }
+  .primary { background: var(--accent); color: #fff; font-weight: 700; font-size: 18px; padding: 14px 26px; border-radius: 12px; }
+  body.force-dark .primary { color: #0B1A2C; }
+
+  /* ---- Menu ---- */
+  #menu {
+    position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column;
+    background: var(--live-bg); color: var(--live-ink);
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+    -webkit-user-select: text; user-select: text;
+  }
+  #menu.show { display: flex; }
+  #menuhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  #tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tab { padding: 8px 12px; border-radius: 8px; font-size: 16px; font-weight: 600; color: var(--muted); }
+  .tab.on { background: var(--panel); color: var(--live-ink); }
+  #done { font-size: 17px; font-weight: 700; color: var(--accent); padding: 8px; }
+  #menubody { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #menuinner { max-width: 680px; margin: 0 auto; padding: 20px; }
+  .section { margin-bottom: 26px; }
+  .section h2 { font-size: 20px; font-weight: 800; margin: 0 0 10px; }
+  .body { font-size: 16px; line-height: 1.5; margin: 0 0 10px; }
+  .hint { font-size: 14px; color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
+  .label { font-size: 16px; margin: 0 0 6px; }
+  .row-gap { height: 14px; }
+  .seg { display: inline-flex; flex-wrap: wrap; background: var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { padding: 8px 16px; border-radius: 8px; font-size: 16px; font-weight: 600; color: var(--muted); }
+  .seg.small button { padding: 6px 10px; font-size: 14px; }
+  .seg button.on { background: var(--panel); color: var(--live-ink); }
+  .toggle { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; font-size: 16px; }
+  .switch { width: 50px; height: 30px; border-radius: 15px; background: var(--line); position: relative; flex-shrink: 0; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+  .switch.on { background: var(--frozen-bg); }
+  .switch.on::after { transform: translateX(20px); }
+  .link { color: var(--accent); font-weight: 600; font-size: 15px; margin-top: 6px; }
+  .reading { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .reading .idx { width: 36px; font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .reading .val { min-width: 90px; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .reading .note { flex: 1; font-size: 17px; margin: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reading input {
+    flex: 1; min-width: 0; font: inherit; font-size: 17px; margin: 0 12px; padding: 6px 10px; border-radius: 8px;
+    border: 1.5px solid var(--accent); background: var(--panel); color: var(--live-ink);
+  }
+  .reading .time { font-size: 15px; color: var(--muted); }
+  .clear { margin-top: 24px; padding: 12px 18px; border-radius: 10px; border: 1.5px solid var(--danger); color: var(--danger); font-weight: 700; }
+  ul.body { padding-left: 1.2em; }
+  ul.body li { margin-bottom: 6px; }
+</style>
+</head>
+<body class="force-light">
+
+<div id="stage">
+  <div id="rot">
+    <div id="topbar">
+      <button id="burger" aria-label="Open menu"><span></span><span></span><span></span></button>
+      <div id="count"></div>
+    </div>
+    <div id="center">
+      <div id="angle">––<span class="deg">°</span></div>
+      <div id="status">Starting…</div>
+      <div id="rate" hidden></div>
+    </div>
+    <div id="hints"></div>
+  </div>
+</div>
+
+<div id="start">
+  <div>
+    <h1>Inclinometer</h1>
+    <p id="startmsg">This app needs access to your device's motion sensor to measure tilt. Nothing leaves your device.</p>
+    <button class="primary" id="startbtn">Start</button>
+  </div>
+</div>
+
+<div id="menu">
+  <div id="menuhead">
+    <div id="tabs">
+      <button class="tab" data-tab="readings">Readings</button>
+      <button class="tab" data-tab="settings">Settings</button>
+      <button class="tab" data-tab="help">How to use</button>
+    </div>
+    <button id="done">Done</button>
+  </div>
+  <div id="menubody"><div id="menuinner"></div></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Constants and saved state
+  // ---------------------------------------------------------------------------
+  const FLAT_THRESHOLD = 0.35;          // below this (in g), the phone is too flat to read edge tilt
+  const SMOOTHING_TAU = { low: 0.04, medium: 0.1, high: 0.27 }; // seconds
+  const G = 9.80665;
+  const SETTINGS_KEY = 'inclinometer.web.settings.v1';
+  const READINGS_KEY = 'inclinometer.web.readings.v1';
+
+  const DEFAULTS = {
+    edge: 'long',            // 'long' (landscape use) | 'short' (portrait use)
+    increment: 1,
+    smoothing: 'medium',
+    keepAwake: true,
+    haptics: true,
+    reverse: false,          // true = clockwise reads positive
+    darkMode: false,
+    showHints: true,
+    showRate: false,
+    holdMs: 1000,
+    doubleTapMs: 280,
+    gestures: { zero: 'tap', freeze: 'hold', store: 'double' },
+  };
+  const ACTION_LABELS = { zero: 'Zero / unfreeze', freeze: 'Freeze / unfreeze', store: 'Store frozen reading' };
+  const GESTURE_LABELS = { tap: 'Tap', double: 'Double tap', hold: 'Hold' };
+  const canVibrate = typeof navigator.vibrate === 'function';
+  const canWakeLock = 'wakeLock' in navigator;
+
+  const load = (key, fallback) => {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+  };
+  const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+
+  const saved = load(SETTINGS_KEY, {});
+  let settings = { ...DEFAULTS, ...saved, gestures: { ...DEFAULTS.gestures, ...(saved.gestures || {}) } };
+  let readings = load(READINGS_KEY, []);
+  if (!Array.isArray(readings)) readings = [];
+
+  const saveSettings = () => save(SETTINGS_KEY, settings);
+  const saveReadings = () => save(READINGS_KEY, readings);
+
+  // ---------------------------------------------------------------------------
+  // Math helpers
+  // ---------------------------------------------------------------------------
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const wrap180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180;
+  function roundTo(value, inc) {
+    const r = Math.round(value / inc) * inc;
+    const s = inc < 1 ? r.toFixed(1) : r.toFixed(0);
+    return s === '-0' || s === '-0.0' ? s.slice(1) : s;
+  }
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---------------------------------------------------------------------------
+  // Measurement state
+  // ---------------------------------------------------------------------------
+  let filtered = null;     // smoothed gravity vector in device coordinates (units of g)
+  let edgeUp = null;       // device axis pointing "up" from the measured edge
+  let unwrapped = null;    // continuous angle, can pass ±180
+  let prevRaw = null;
+  let zeroRef = 0;
+  let live = 0;            // current angle (degrees)
+  let isFlat = false;
+  let frozen = null;       // { value, stored }
+  let flashTimer = null;
+  let lastTs = null;
+  let sampleCount = 0;
+  let rate = 0;
+  let gotMotion = false;
+  let needsRender = false;
+
+  function resetMeasurement() {
+    edgeUp = null; unwrapped = null; prevRaw = null; zeroRef = 0;
+  }
+
+  // The measured edge is a fixed setting tied to the phone's body, so rotating
+  // the phone or the screen never changes what is being measured.
+  function onMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x === null || g.y === null) return;
+    if (!gotMotion) { gotMotion = true; render(); }
+    sampleCount += 1;
+    const ux = g.x / G, uy = g.y / G;
+
+    const now = performance.now() / 1000;
+    const dt = lastTs === null ? 0 : Math.min(Math.max(now - lastTs, 0), 0.25);
+    lastTs = now;
+    const tau = SMOOTHING_TAU[settings.smoothing] || SMOOTHING_TAU.medium;
+    const a = dt > 0 ? 1 - Math.exp(-dt / tau) : 1;
+    filtered = filtered ? { x: filtered.x + a * (ux - filtered.x), y: filtered.y + a * (uy - filtered.y) } : { x: ux, y: uy };
+    const fx = filtered.x, fy = filtered.y;
+
+    if (Math.hypot(fx, fy) < FLAT_THRESHOLD) {
+      if (!isFlat) { isFlat = true; render(); }
+      prevRaw = null;
+      return;
+    }
+    if (isFlat) { isFlat = false; needsRender = true; }
+
+    // Which way is "up" along the measured edge? Taken from gravity, so it works
+    // regardless of how a browser signs its sensor values.
+    if (!edgeUp) {
+      if (settings.edge === 'long' && Math.abs(fx) > 0.5) edgeUp = { x: Math.sign(fx), y: 0 };
+      else if (settings.edge === 'short' && Math.abs(fy) > 0.5) edgeUp = { x: 0, y: Math.sign(fy) };
+      else { render(); return; }
+      layout();
+      needsRender = true;
+    }
+    const s = edgeUp, r = { x: s.y, y: -s.x };
+    const raw = toDeg(Math.atan2(fx * r.x + fy * r.y, fx * s.x + fy * s.y));
+
+    if (unwrapped === null) unwrapped = raw;
+    else if (prevRaw === null) unwrapped += wrap180(raw - wrap180(unwrapped));
+    else unwrapped += wrap180(raw - prevRaw);
+    prevRaw = raw;
+
+    live = (settings.reverse ? -1 : 1) * (unwrapped - zeroRef);
+    if (needsRender) { needsRender = false; render(); } else renderNumber();
+  }
+
+  setInterval(() => { rate = sampleCount; sampleCount = 0; if (settings.showRate) renderRate(); }, 1000);
+
+  // ---------------------------------------------------------------------------
+  // Display rotation: keep the main screen fixed to the phone's body
+  // ---------------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), rot = $('rot'), angleEl = $('angle'), statusEl = $('status'),
+        rateEl = $('rate'), hintsEl = $('hints'), countEl = $('count');
+
+  function screenAngle() {
+    if (typeof window.orientation === 'number') return window.orientation;
+    if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+    return 0;
+  }
+
+  // Default layout before the phone is held on its edge.
+  function defaultUp() { return settings.edge === 'long' ? { x: 1, y: 0 } : { x: 0, y: 1 }; }
+
+  function layout() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const a = (screenAngle() * Math.PI) / 180;
+    const screenUp = { x: Math.sin(a), y: Math.cos(a) };      // screen's up, in device coordinates
+    const want = edgeUp || defaultUp();                        // the content's up, in device coordinates
+    let delta = toDeg(Math.atan2(want.y, want.x) - Math.atan2(screenUp.y, screenUp.x));
+    delta = Math.round(wrap180(delta) / 90) * 90;
+    if (delta === -180) delta = 180;
+    const sideways = Math.abs(delta) === 90;
+    const w = sideways ? vh : vw, h = sideways ? vw : vh;
+    rot.style.width = w + 'px';
+    rot.style.height = h + 'px';
+    rot.style.transform = `translate(-50%, -50%) rotate(${-delta}deg)`;
+    const maxChars = settings.increment < 1 ? 6 : 4;
+    const fs = Math.min(h * 0.5, (w * 0.86) / (maxChars * 0.62 + 0.45));
+    angleEl.style.fontSize = Math.max(fs, 40) + 'px';
+  }
+  window.addEventListener('resize', layout);
+  window.addEventListener('orientationchange', () => setTimeout(layout, 50));
+
+  // ---------------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------------
+  let lastShown = null;
+  function renderNumber(force) {
+    const shown = frozen ? frozen.value : live;
+    const text = (!frozen && (isFlat || !edgeUp)) ? '––' : roundTo(shown, settings.increment);
+    if (force || text !== lastShown) {
+      lastShown = text;
+      angleEl.firstChild.nodeValue = text;
+    }
+  }
+
+  function renderRate() {
+    rateEl.hidden = !settings.showRate;
+    rateEl.textContent = `${rate} readings/s`;
+  }
+
+  function actionFor(gesture) {
+    return Object.keys(settings.gestures).find((k) => settings.gestures[k] === gesture);
+  }
+  function hintFor(action) {
+    if (action === 'zero') return frozen ? 'Unfreeze' : 'Zero';
+    if (action === 'freeze') return frozen ? 'Unfreeze' : 'Freeze';
+    if (action === 'store') return frozen && !frozen.stored ? 'Store' : null;
+    return null;
+  }
+
+  function render() {
+    stage.classList.toggle('frozen', !!frozen);
+    let status = 'Live';
+    if (frozen && frozen.stored) status = 'Stored';
+    else if (frozen) status = 'Frozen';
+    else if (!gotMotion) status = 'Waiting for motion sensor…';
+    else if (isFlat || !edgeUp) status = settings.edge === 'long' ? 'Stand the device on its long edge' : 'Stand the device on its short edge';
+    statusEl.textContent = status;
+
+    countEl.textContent = readings.length ? `${readings.length} stored` : '';
+
+    if (settings.showHints) {
+      hintsEl.innerHTML = ['tap', 'double', 'hold'].map((g) => {
+        const act = actionFor(g);
+        const label = act && hintFor(act);
+        if (!label) return '';
+        const name = g === 'hold' ? `Hold ${settings.holdMs / 1000} s` : GESTURE_LABELS[g];
+        return `<span><b>${name}</b>${label}</span>`;
+      }).join('');
+    } else hintsEl.innerHTML = '';
+
+    renderRate();
+    renderNumber(true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+  function buzz(kind) {
+    if (!settings.haptics || !canVibrate) return;
+    const patterns = { zero: 15, freeze: 40, unfreeze: 10, store: [30, 60, 30], nope: [60, 40, 60] };
+    try { navigator.vibrate(patterns[kind] || 10); } catch {}
+  }
+
+  function doZero() {
+    if (frozen) { frozen = null; buzz('unfreeze'); return render(); }
+    if (unwrapped === null) return buzz('nope');
+    zeroRef = unwrapped; live = 0; buzz('zero'); render();
+  }
+  function doFreeze() {
+    if (frozen) { frozen = null; buzz('unfreeze'); return render(); }
+    if (unwrapped === null || isFlat) return buzz('nope');
+    frozen = { value: live, stored: false }; buzz('freeze'); render();
+  }
+  function doStore() {
+    if (!frozen || frozen.stored) return buzz('nope');
+    readings.unshift({ id: Date.now(), value: roundTo(frozen.value, settings.increment), time: new Date().toISOString(), note: '' });
+    saveReadings();
+    frozen.stored = true;
+    stage.classList.add('stored-flash');
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => stage.classList.remove('stored-flash'), 450);
+    buzz('store'); render();
+  }
+  const ACTIONS = { zero: doZero, freeze: doFreeze, store: doStore };
+  const run = (g) => { const act = actionFor(g); if (act) ACTIONS[act](); };
+
+  function doubleTapUseful() {
+    const act = actionFor('double');
+    if (!act) return false;
+    if (act === 'store') return !!frozen && !frozen.stored;
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gesture recognizer
+  // ---------------------------------------------------------------------------
+  let holdTimer = null, tapTimer = null, holdFired = false, activePointer = null;
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('#burger')) return;
+    if (activePointer !== null) return;          // ignore extra fingers
+    activePointer = e.pointerId;
+    holdFired = false;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      holdFired = true;
+      clearTimeout(tapTimer); tapTimer = null;
+      run('hold');
+    }, settings.holdMs);
+  });
+  stage.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== activePointer) return;
+    activePointer = null;
+    clearTimeout(holdTimer);
+    if (holdFired) return;
+    if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; run('double'); return; }
+    if (doubleTapUseful()) {
+      tapTimer = setTimeout(() => { tapTimer = null; run('tap'); }, settings.doubleTapMs);
+    } else run('tap');
+  });
+  const cancel = (e) => { if (e.pointerId === activePointer) { activePointer = null; clearTimeout(holdTimer); } };
+  stage.addEventListener('pointercancel', cancel);
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('gesturestart', (e) => e.preventDefault()); // block pinch-zoom on iOS
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+
+  // ---------------------------------------------------------------------------
+  // Keep screen awake
+  // ---------------------------------------------------------------------------
+  let wakeLock = null;
+  async function updateWakeLock() {
+    if (!canWakeLock) return;
+    try {
+      if (settings.keepAwake && document.visibilityState === 'visible') {
+        if (!wakeLock) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', updateWakeLock);
+
+  // ---------------------------------------------------------------------------
+  // Menu
+  // ---------------------------------------------------------------------------
+  const menu = $('menu'), inner = $('menuinner');
+  let tab = 'readings';
+  let editingId = null;
+
+  $('burger').addEventListener('click', () => { menu.classList.add('show'); drawMenu(); });
+  $('done').addEventListener('click', () => { commitEdit(); menu.classList.remove('show'); editingId = null; render(); });
+  document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { commitEdit(); tab = b.dataset.tab; drawMenu(); }));
+
+  function setSetting(patch) {
+    const before = settings.edge;
+    settings = { ...settings, ...patch };
+    saveSettings();
+    if (settings.edge !== before) { resetMeasurement(); }
+    applyTheme(); layout(); updateWakeLock(); drawMenu(); render();
+  }
+  function assign(action, gesture) {
+    const g = { ...settings.gestures };
+    const other = Object.keys(g).find((k) => g[k] === gesture);
+    if (other && other !== action) g[other] = g[action];
+    g[action] = gesture;
+    setSetting({ gestures: g });
+  }
+
+  const seg = (key, options, small) =>
+    `<div class="seg${small ? ' small' : ''}" data-key="${key}">` +
+    options.map(([v, label]) => `<button data-val="${escapeHtml(JSON.stringify(v))}" class="${JSON.stringify(settings[key]) === JSON.stringify(v) ? 'on' : ''}">${label}</button>`).join('') +
+    `</div>`;
+  const toggle = (key, label) =>
+    `<div class="toggle"><span>${label}</span><button class="switch${settings[key] ? ' on' : ''}" data-toggle="${key}" aria-label="${label}"></button></div>`;
+
+  function drawMenu() {
+    document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+    if (tab === 'readings') drawReadings();
+    else if (tab === 'settings') drawSettings();
+    else drawHelp();
+  }
+
+  function drawReadings() {
+    if (!readings.length) {
+      inner.innerHTML = `<p class="body">No stored readings. Freeze a reading, then double tap it to store it here.</p>`;
+      return;
+    }
+    const rows = readings.map((r, i) => {
+      const time = new Date(r.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const note = r.id === editingId
+        ? `<input id="noteinput" maxlength="60" placeholder="Add a note" value="${escapeHtml(r.note || '')}" enterkeyhint="done">`
+        : `<span class="note">${escapeHtml(r.note || '')}</span>`;
+      return `<div class="reading" data-id="${r.id}"><span class="idx">${readings.length - i}</span><span class="val">${escapeHtml(r.value)}°</span>${note}<span class="time">${time}</span></div>`;
+    }).join('');
+    inner.innerHTML = rows +
+      `<p class="hint">Tap a reading to add or edit a note.</p>` +
+      `<button class="clear" id="clearbtn">Clear stored readings</button>`;
+
+    inner.querySelectorAll('.reading').forEach((row) => row.addEventListener('click', (e) => {
+      const id = Number(row.dataset.id);
+      if (id === editingId) return;
+      commitEdit();
+      editingId = id; drawReadings();
+      const input = $('noteinput');
+      if (input) {
+        input.focus();
+        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); commitEdit(); drawReadings(); } });
+        input.addEventListener('blur', () => { setTimeout(() => { if (editingId === id) { commitEdit(); drawReadings(); } }, 0); });
+      }
+    }));
+    $('clearbtn').addEventListener('click', () => {
+      if (confirm(`Clear stored readings?\nThis deletes all ${readings.length} readings and their notes.`)) {
+        readings = []; editingId = null; saveReadings(); drawReadings(); render();
+      }
+    });
+  }
+
+  function commitEdit() {
+    const input = $('noteinput');
+    if (editingId === null || !input) { editingId = null; return; }
+    const r = readings.find((x) => x.id === editingId);
+    if (r) { r.note = input.value.trim(); saveReadings(); }
+    editingId = null;
+  }
+
+  function drawSettings() {
+    const gestureRows = Object.keys(ACTION_LABELS).map((action) =>
+      `<p class="label">${ACTION_LABELS[action]}</p>` +
+      `<div class="seg small" data-gesture="${action}">` +
+      Object.entries(GESTURE_LABELS).map(([g, label]) => `<button data-g="${g}" class="${settings.gestures[action] === g ? 'on' : ''}">${label}</button>`).join('') +
+      `</div><div class="row-gap"></div>`).join('');
+
+    inner.innerHTML = `
+      <div class="section"><h2>Measured edge</h2>
+        ${seg('edge', [['long', 'Long edge'], ['short', 'Short edge']])}
+        <p class="hint">The edge you rest against the surface or body segment. Rotating the device never resets the reading. Changing this setting resets the zero.</p>
+      </div>
+      <div class="section"><h2>Display increment</h2>${seg('increment', [[0.1, '0.1°'], [1, '1°'], [5, '5°']])}</div>
+      <div class="section"><h2>Smoothing</h2>${seg('smoothing', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
+        <p class="hint">More smoothing is steadier but slower to settle.</p></div>
+      <div class="section"><h2>Gestures</h2>
+        ${gestureRows}
+        <p class="label">Hold duration</p>${seg('holdMs', [[500, '0.5 s'], [750, '0.75 s'], [1000, '1 s'], [1500, '1.5 s']], true)}
+        <div class="row-gap"></div>
+        <p class="label">Double tap speed</p>${seg('doubleTapMs', [[200, 'Fast'], [280, 'Normal'], [400, 'Relaxed']], true)}
+        <p class="hint">Relaxed gives more time between taps, but tapping a frozen reading to unfreeze it waits a little longer.</p>
+        ${toggle('showHints', 'Show gestures on screen')}
+        <button class="link" id="resetgestures">Restore default gestures</button>
+      </div>
+      <div class="section"><h2>Other</h2>
+        ${toggle('darkMode', 'Dark background')}
+        ${canWakeLock ? toggle('keepAwake', 'Keep screen awake') : ''}
+        ${canVibrate ? toggle('haptics', 'Vibrate to confirm') : ''}
+        ${toggle('reverse', 'Clockwise reads positive')}
+        ${toggle('showRate', 'Show sensor rate')}
+        ${!canVibrate ? '<p class="hint">This browser doesn’t support vibration, so the screen color confirms each action instead.</p>' : ''}
+        ${!canWakeLock ? '<p class="hint">This browser can’t keep the screen awake. Turn up the auto-lock time in your device settings if it dims while measuring.</p>' : ''}
+      </div>`;
+
+    inner.querySelectorAll('.seg[data-key]').forEach((el) => el.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => setSetting({ [el.dataset.key]: JSON.parse(b.dataset.val) }))));
+    inner.querySelectorAll('.seg[data-gesture]').forEach((el) => el.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => assign(el.dataset.gesture, b.dataset.g))));
+    inner.querySelectorAll('[data-toggle]').forEach((b) =>
+      b.addEventListener('click', () => setSetting({ [b.dataset.toggle]: !settings[b.dataset.toggle] })));
+    $('resetgestures').addEventListener('click', () =>
+      setSetting({ gestures: DEFAULTS.gestures, holdMs: DEFAULTS.holdMs, doubleTapMs: DEFAULTS.doubleTapMs }));
+  }
+
+  function drawHelp() {
+    const g = (a) => GESTURE_LABELS[settings.gestures[a]].toLowerCase();
+    inner.innerHTML = `
+      <div class="section"><h2>Taking a reading</h2>
+        <p class="body">Rest the device's ${settings.edge} edge against the surface or body segment you're measuring. You can change which edge under Settings › Measured edge. The number shows that edge's tilt. Tilting counterclockwise reads positive by default. To flip this, turn on Settings › Clockwise reads positive.</p>
+        <p class="body">The reading keeps counting past 180° in either direction, and rotating the device never resets it.</p>
+      </div>
+      <div class="section"><h2>Gestures</h2>
+        <ul class="body">
+          <li>Zero: ${g('zero')} while the reading is live.</li>
+          <li>Freeze: ${g('freeze')}. The screen turns blue.</li>
+          <li>Unfreeze: ${g('zero')} a frozen reading.</li>
+          <li>Store: ${g('store')} a frozen reading. The screen flashes green and the reading is saved under Readings.</li>
+          <li>Notes: in Readings, tap a stored reading to add a short note like "extension." Clearing readings clears their notes too.</li>
+        </ul>
+      </div>
+      <div class="section"><h2>Install it like an app</h2>
+        <p class="body">On iPhone or iPad, tap Share in Safari, then Add to Home Screen. On Android, open Chrome's menu and choose Add to Home screen or Install app. It then opens full-screen from its own icon.</p>
+        <p class="body">If the screen rotates while you measure, turn on your device's rotation lock. The app draws itself to match the measured edge either way.</p>
+      </div>
+      <div class="section"><h2>Accuracy tips</h2>
+        <p class="body">The app measures tilt from gravity with the device's motion sensor, so hold still for a moment before freezing. It can't read edge tilt with the device lying flat on its back. Cases with raised or curved edges can add error, so zero against a known level surface when accuracy matters.</p>
+      </div>
+      <div class="section"><h2>Privacy</h2>
+        <p class="body">The app uses only the motion sensor. Readings and settings are stored on this device and never sent anywhere.</p>
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theme and startup
+  // ---------------------------------------------------------------------------
+  function applyTheme() {
+    document.body.classList.toggle('force-dark', settings.darkMode);
+    document.body.classList.toggle('force-light', !settings.darkMode);
+  }
+
+  const startEl = $('start'), startMsg = $('startmsg'), startBtn = $('startbtn');
+  const needsPermission = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
+
+  function begin() {
+    window.addEventListener('devicemotion', onMotion);
+    updateWakeLock();
+    // If no motion data arrives, say so rather than waiting forever.
+    setTimeout(() => {
+      if (!gotMotion) {
+        startMsg.textContent = 'No motion data is coming from this device. Open the page on a phone or tablet, and make sure motion access is allowed for this site.';
+        startBtn.textContent = 'Try again';
+        startEl.classList.add('show');
+      }
+    }, 2500);
+  }
+
+  startBtn.addEventListener('click', async () => {
+    if (needsPermission) {
+      try {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') {
+          startMsg.textContent = 'Motion access was denied. Close and reopen the app, then tap Start and choose Allow.';
+          return;
+        }
+      } catch {
+        startMsg.textContent = 'Couldn’t ask for motion access. Close and reopen the app, then try again.';
+        return;
+      }
+    }
+    startEl.classList.remove('show');
+    window.removeEventListener('devicemotion', onMotion);
+    begin();
+  });
+
+  applyTheme();
+  layout();
+  render();
+  if (typeof DeviceMotionEvent === 'undefined') {
+    startMsg.textContent = 'This browser doesn’t provide motion sensor data. Open the page in Safari on iPhone or iPad, or Chrome on Android.';
+    startBtn.hidden = true;
+    startEl.classList.add('show');
+  } else if (needsPermission) {
+    startEl.classList.add('show');   // iOS and iPadOS need a tap before sharing motion data
+  } else {
+    begin();
+  }
+})();
+</script>
+</body>
+</html>
